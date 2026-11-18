@@ -48,6 +48,7 @@ from vllm.logprobs import Logprob
 from vllm.multimodal.inputs import PlaceholderRange
 from vllm.outputs import CompletionOutput, RequestOutput
 from vllm.parser import HarmonyParser
+from vllm.parser.parser_manager import ParserManager
 from vllm.renderers.hf import HfRenderer
 from vllm.renderers.mistral import MistralRenderer
 from vllm.renderers.online_renderer import OnlineRenderer
@@ -795,6 +796,53 @@ async def test_chat_streaming_metrics_ride_on_usage_chunk():
     usage_chunks = [chunk for chunk in chunks if chunk.get("usage")]
     assert usage_chunks
     assert usage_chunks[-1]["metrics"]["time_to_first_token_ms"] == pytest.approx(500.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prompt_marker, text, token_ids, finish_reason, expected",
+    [
+        pytest.param(10, "think", (20, 21), "length", 2, id="truncated"),
+        pytest.param(
+            10, "think</think>answer", (20, 21, 11, 30), "stop", 2, id="complete"
+        ),
+        pytest.param(11, "answer", (30,), "stop", 0, id="closed-in-prompt"),
+    ],
+)
+async def test_streaming_deepseek_r1_reasoning_usage(
+    prompt_marker, text, token_ids, finish_reason, expected
+):
+    serving = _build_minimal_metrics_serving_chat(enable_per_request_metrics=False)
+    serving._include_reasoning_tokens_details = True
+    serving.model_config = None
+    serving.parser_cls = ParserManager.get_parser(reasoning_parser_name="deepseek_r1")
+    tokenizer = MagicMock()
+    tokenizer.get_vocab.return_value = {"<think>": 10, "</think>": 11}
+    result = _make_metrics_request_output(metrics=None, token_ids=token_ids)
+    result.prompt_token_ids = [1, prompt_marker]
+    result.outputs[0].text = text
+    result.outputs[0].finish_reason = finish_reason
+    request = ChatCompletionRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "Test"}],
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    chunks = [
+        chunk
+        async for chunk in serving.chat_completion_stream_generator(
+            request,
+            _single_request_output(result),
+            "chatcmpl-test-id",
+            "test-model",
+            conversation=[{"role": "user", "content": "Test"}],
+            tokenizer=tokenizer,
+            request_metadata=RequestResponseMetadata(request_id="chatcmpl-test-id"),
+        )
+    ]
+    usage = json.loads(chunks[-2].removeprefix("data: "))["usage"]
+    assert usage["completion_tokens_details"]["reasoning_tokens"] == expected
 
 
 @pytest.mark.asyncio

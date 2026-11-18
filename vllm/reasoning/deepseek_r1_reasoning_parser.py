@@ -24,6 +24,15 @@ class DeepSeekR1ReasoningParser(BaseThinkingReasoningParser):
         """The token that ends reasoning content."""
         return "</think>"
 
+    def count_reasoning_tokens(self, token_ids: Sequence[int]) -> int:
+        if self.start_token_id in token_ids:
+            return super().count_reasoning_tokens(token_ids)
+        # The chat template can open the thinking block in the prompt.
+        try:
+            return token_ids.index(self.end_token_id)
+        except ValueError:
+            return len(token_ids)
+
     def extract_reasoning_streaming(
         self,
         previous_text: str,

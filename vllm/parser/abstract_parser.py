@@ -48,6 +48,7 @@ class StreamState:
     reasoning_ended: bool = False
     tool_call_text_started: bool = False
     prompt_reasoning_checked: bool = False
+    prompt_reasoning_ended: bool = False
     previous_text: str = ""
     previous_token_ids: list[int] = field(default_factory=list)
     history_tool_call_cnt: int = 0
@@ -691,6 +692,7 @@ class DelegatingParser(Parser):
             if self._reasoning_parser is None or self.is_reasoning_end(
                 prompt_token_ids
             ):
+                state.prompt_reasoning_ended = True
                 state.reasoning_ended = True
             else:
                 # Reasoning is still open at the end of the prompt; let the
@@ -817,7 +819,7 @@ class DelegatingParser(Parser):
 
     def count_reasoning_tokens(self, token_ids: Sequence[int]) -> int:
         """Count reasoning tokens through the configured reasoning parser."""
-        if self._reasoning_parser is None:
+        if self._reasoning_parser is None or self._stream_state.prompt_reasoning_ended:
             return 0
         return self._reasoning_parser.count_reasoning_tokens(token_ids)
 
